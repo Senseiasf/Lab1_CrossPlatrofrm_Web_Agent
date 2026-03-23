@@ -1,1 +1,1 @@
-# Lab1_CrossPlatrofrm_Web_Agent_TOPIT_ELENING_LMS_ABCE_RYBALKA_I_GAYANA_C_LENOY
+# Lab1_CrossPlatrofrm_Web_Agent_TOPIT
