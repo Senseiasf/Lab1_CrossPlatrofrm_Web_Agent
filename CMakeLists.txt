@@ -1,20 +1,38 @@
 cmake_minimum_required(VERSION 3.15)
-project(WebAgent VERSION 1.0 LANGUAGES CXX)
+project(WebAgent)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 1. Указываем компилятору искать заголовочные файлы в вашей папке include
-include_directories(include)
+include(FetchContent)
 
-# 2. Оставляем поиск OpenSSL (он нужен для HTTPS работы httplib)
-find_package(OpenSSL REQUIRED)
-
-add_executable(web_agent
-    src/main.cpp
-    src/agent.cpp
-    src/utils.cpp
+FetchContent_Declare(
+    json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.2 # Можно указать конкретную версию или master
 )
+FetchContent_MakeAvailable(json)
 
-# 3. Линкуем только OpenSSL
-target_link_libraries(web_agent PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+FetchContent_Declare(
+    cpr
+    GIT_REPOSITORY https://github.com/libcpr/cpr.git
+    GIT_TAG 1.10.x
+)
+FetchContent_MakeAvailable(cpr)
+
+find_package(CURL REQUIRED)
+
+add_executable(${PROJECT_NAME}
+    main.cpp
+    HTTP_client.cpp
+    json_functions.cpp
+    consoletab.cpp
+    logger.cpp
+)
+#target_compile_definitions(${PROJECT_NAME} PRIVATE SEQ_OUT)
+#Хотите увидеть необработанные логи от сервера - убираете сверху #. q может
+#больше не работать, но видите все ответы сервера. Нужно перебилдить через make,
+#должна пройти сборка с такой кучей текста (у меня иногда не с 1ого раза собирало)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE cpr::cpr CURL::libcurl)
+# В конце CMakeLists.txt должно быть так:
+target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
