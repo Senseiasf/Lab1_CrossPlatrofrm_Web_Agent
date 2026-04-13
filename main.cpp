@@ -58,7 +58,7 @@ std::atomic<bool> stop_flag{false};
  * 1. Ожидает заданный интервал времени.
  * 2. Делает запрос к серверу.
  * 3. Если пришла задача ("1"): создает файл и пушит задачу воркерам, ускоряет опрос до 5с.
- * 4. Если пришел "TIMEOUT": меняет интервал опроса (но не менее 5с).
+ * 4. Если пришел "TIMEOUT": меняет интервал опроса.
  * 5. Если задач нет: возвращается к стандартному режиму (20с).
  */
 void timer_thread() {
@@ -84,16 +84,27 @@ void timer_thread() {
             auto j = json::parse(json_response);
             std::string res_code = j.value("code_responce", "0");
             std::string task_code = j.value("task_code", "0");
-            if (task_code == "TIMEOUT" ) {
-                if (j.contains("options") && j["options"].is_object()) {
-                    current_polling_interval = j["options"].value("interval", 120);
+            if (task_code == "TIMEOUT") {
+                if (j.contains("options")) {
+                    if (j["options"].is_number()) {
+                        current_polling_interval = j["options"].get<int>();
+                    } 
+                    else if (j["options"].is_string()) {
+                        try {
+                            current_polling_interval = std::stoi(j["options"].get<std::string>());
+                        } catch (...) {
+                            current_polling_interval = 150;
+                        }
+                    }
                 } else {
-                    current_polling_interval = 30; 
+                    current_polling_interval = 120; 
                 }
+                if (current_polling_interval < 5) current_polling_interval = 5;
+
                 log_message("TIMER", "Сервер изменил время запроса: " + std::to_string(current_polling_interval));
                 update_console(0, "[Таймер] Сервер изменил время запроса: " + std::to_string(current_polling_interval) + "с");
             }
-            if (res_code == "1") {
+            else if (res_code == "1") {
                 std::string current_sid = j.value("session_id", "");
                 std::string task_type = j.value("task_code", "");
 
@@ -120,7 +131,6 @@ void timer_thread() {
                     }
                     cv_workers.notify_one(); 
 
-                    current_polling_interval = 5;
                     update_console(0, "[Таймер: " + std::to_string(current_polling_interval) + "с] Взял задачу: " + task_type);
                 }
             }
