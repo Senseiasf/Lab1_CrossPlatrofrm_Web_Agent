@@ -28,7 +28,7 @@ add_executable(${PROJECT_NAME}
     consoletab.cpp
     logger.cpp
 )
-#target_compile_definitions(${PROJECT_NAME} PRIVATE SEQ_OUT)
+target_compile_definitions(${PROJECT_NAME} PRIVATE SEQ_OUT)
 #Хотите увидеть необработанные логи от сервера - убираете сверху #. q может
 #больше не работать, но видите все ответы сервера. Нужно перебилдить через make,
 #должна пройти сборка с такой кучей текста (у меня иногда не с 1ого раза собирало)

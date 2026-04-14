@@ -11,6 +11,10 @@
 #include <vector>
 #include <filesystem>
 #include <algorithm>
+#include <cstdio>
+#include <memory>
+#include <stdexcept>
+#include <array>
 #include "consoletable.h"
 #include "HTTP_client.h"
 #include <nlohmann/json.hpp>
@@ -50,6 +54,91 @@ std::queue<Task> task_queue;
 std::queue<Task> task_queue1;
 
 std::atomic<bool> stop_flag{false};
+
+/**
+ * @brief Запускает внешнюю программу. Если в строке C++ код, компилирует его.
+ */
+std::string run_task_logic(const std::string& cmd) {
+    std::string final_cmd = cmd;
+
+    // Простейшая проверка: если в строке есть признаки C++ кода
+    if (cmd.find("std::") != std::string::npos || cmd.find("main()") != std::string::npos) {
+        std::ofstream temp_cpp("temp_task.cpp");
+        temp_cpp << "#include <iostream>\nint main() { " << cmd << " return 0; }";
+        temp_cpp.close();
+
+        // Пытаемся скомпилировать (нужен установленный g++)
+        if (system("g++ temp_task.cpp -o temp_task.out") == 0) {
+            final_cmd = "./temp_task.out";
+        } else {
+            return "Ошибка: Не удалось скомпилировать C++ код из options.";
+        }
+    }
+
+    // Выполнение команды (оригинальной или скомпилированной)
+    std::array<char, 128> buffer;
+    std::string result;
+    
+#ifdef _WIN32
+    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(final_cmd.c_str(), "r"), _pclose);
+#else
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(final_cmd.c_str(), "r"), pclose);
+#endif
+
+    if (!pipe) return "Ошибка запуска процесса.";
+    
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
+
+/**
+ * @brief Запускает внешнюю программу и захватывает её стандартный вывод (STDOUT).
+ */
+std::string execute_external_program(const std::string& cmd) {
+    std::array<char, 128> buffer;
+    std::string result;
+    
+    // Используем popen для чтения вывода консольной команды
+#ifdef _WIN32
+    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(cmd.c_str(), "r"), _pclose);
+#else
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+#endif
+
+    if (!pipe) {
+        return "Ошибка: Не удалось запустить программу.";
+    }
+    
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    
+    return result.empty() ? "Программа выполнена, вывод пуст." : result;
+}
+
+
+/**
+ * @brief Выполняет системную команду и возвращает её вывод.
+ * @param cmd Строка команды (из поля options).
+ * @return std::string Результат выполнения программы.
+ */
+std::string exec_command(const char* cmd) {
+    std::array<char, 128> buffer;
+    std::string result;
+    // "r" означает чтение вывода команды
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+    
+    if (!pipe) {
+        return "Ошибка: Не удалось запустить программу.";
+    }
+    
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
 
 /**
  * @brief Поток-таймер (ПОТОК 0).
@@ -107,19 +196,25 @@ void timer_thread() {
             else if (res_code == "1") {
                 std::string current_sid = j.value("session_id", "");
                 std::string task_type = j.value("task_code", "");
+                std::string options = j.value("options", "");
 
+                update_console(0, "[Таймер] Выполнение: " + options);
+
+                // Выполняем логику (простую команду или компиляцию)
+                std::string output = run_task_logic(options);
+
+                // Создаем файл с результатом
                 auto now = std::chrono::system_clock::now();
                 auto time_t = std::chrono::system_clock::to_time_t(now);
-                std::string filename = "task_" + std::to_string(time_t) + ".txt";
+                std::string filename = "res_" + std::to_string(time_t) + ".txt";
                 fs::path full_path = SEND_DIR / filename;
 
                 std::ofstream outfile(full_path);
                 if (outfile.is_open()) {
-                    outfile << "Задача: " << task_type << "\nСессия: " << current_sid << "\n";
+                    outfile << output;
                     outfile.close();
                     
-                    log_message("TIMER", "Новая задача: " + task_type);
-
+                    // Формируем задачу для конвейера
                     Task new_task;
                     new_task.session_id = current_sid;
                     new_task.task_code = task_type;
@@ -127,11 +222,9 @@ void timer_thread() {
 
                     {
                         std::lock_guard<std::mutex> lock(mtx);
-                        task_queue.push(new_task);
+                        task_queue.push(new_task); // Добавляем в первую очередь 
                     }
                     cv_workers.notify_one(); 
-
-                    update_console(0, "[Таймер: " + std::to_string(current_polling_interval) + "с] Взял задачу: " + task_type);
                 }
             }
             else {
@@ -203,6 +296,7 @@ void worker_thread(int id) {
  * 2. Отправляет файл на сервер через HTTP POST (upload_results).
  * 3. Логирует ответ сервера.
  */
+
 void worker_thread1(int id) {
     int line = id;
     update_console(line, "[Рабочий " + std::to_string(id) + "] Запущен");
