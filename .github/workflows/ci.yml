@@ -1,0 +1,171 @@
+name: CI/CD WebAgent
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Отменяем параллельные запуски на одной ветке
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =====================================================================
+  # Основная сборка + тесты. Матрица: Linux (gcc/clang) и Windows (MSVC).
+  # =====================================================================
+  build-and-test:
+    name: Build & Test (${{ matrix.os }} / ${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+            cc: gcc
+            cxx: g++
+          - os: ubuntu-latest
+            compiler: clang
+            cc: clang
+            cxx: clang++
+          - os: windows-latest
+            compiler: msvc
+            cc: cl
+            cxx: cl
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------- Linux toolchain --------------------
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev \
+            ${{ matrix.compiler == 'clang' && 'clang' || 'g++' }}
+
+      # -------------------- Windows toolchain ------------------
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # -------------------- Cache _deps (FetchContent) ---------
+      # cpr + gtest + nlohmann/json скачиваются и компилируются через
+      # FetchContent. Кэшируем их по хэшу CMakeLists.txt, чтобы CI
+      # не пересобирал зависимости на каждом коммите.
+      - name: Cache CMake build deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps
+            build/CMakeCache.txt
+            build/CMakeFiles
+          key: ${{ runner.os }}-${{ matrix.compiler }}-cmake-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.compiler }}-cmake-
+
+      # -------------------- Configure --------------------------
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: cmake -B build -G Ninja -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      # -------------------- Build ------------------------------
+      - name: Build project
+        run: cmake --build build --config Release -j
+
+      # -------------------- Run tests --------------------------
+      - name: Run tests
+        working-directory: build
+        run: ctest --output-on-failure --timeout 60 -C Release
+
+      # -------------------- Artifacts --------------------------
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.os }}-${{ matrix.compiler }}
+          path: |
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: ignore
+
+      - name: Upload WebAgent binary
+        if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebAgent-linux-x64
+          path: |
+            build/WebAgent
+          retention-days: 14
+
+  # =====================================================================
+  # Sanitizers: AddressSanitizer + UndefinedBehaviorSanitizer на Linux.
+  # Ловит гонки доступа к памяти и UB в многопоточном коде.
+  # =====================================================================
+  sanitizers:
+    name: Sanitizers (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libcurl4-openssl-dev
+
+      - name: Cache CMake deps
+        uses: actions/cache@v4
+        with:
+          path: build-san/_deps
+          key: ubuntu-san-cmake-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: ubuntu-san-cmake-
+
+      - name: Configure with sanitizers
+        env:
+          CXXFLAGS: "-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          LDFLAGS: "-fsanitize=address,undefined"
+        run: cmake -B build-san -G Ninja -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-san -j
+
+      - name: Run tests under sanitizers
+        working-directory: build-san
+        env:
+          ASAN_OPTIONS: "detect_leaks=0:halt_on_error=1"
+          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+        # Пропускаем долгие многопоточные тесты логгера на ASan, чтобы не ловить таймаут.
+        run: ctest --output-on-failure --timeout 120
+
+  # =====================================================================
+  # Статический анализ cppcheck (только инфо, не блокирует мердж).
+  # =====================================================================
+  static-analysis:
+    name: Static analysis (cppcheck)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,performance,portability \
+                   --std=c++17 --quiet --inline-suppr \
+                   --suppress=missingIncludeSystem \
+                   --error-exitcode=0 \
+                   main.cpp HTTP_client.cpp json_functions.cpp \
+                   consoletab.cpp logger.cpp
