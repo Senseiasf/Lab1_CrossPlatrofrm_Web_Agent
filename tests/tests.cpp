@@ -1046,7 +1046,7 @@ TEST(Logger, WritesLogFileAndThreadSafe) {
     const int MSGS_PER_THREAD = 20;
     std::vector<std::thread> threads;
     for (int i = 0; i < NUM_THREADS; ++i) {
-        threads.emplace_back([i]() {
+        threads.emplace_back([i, MSGS_PER_THREAD]() {
             for (int m = 0; m < MSGS_PER_THREAD; ++m) {
                 log_message("THREAD_" + std::to_string(i),
                             "msg_" + std::to_string(m));
