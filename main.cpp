@@ -128,16 +128,12 @@ std::string exec_command(const char* cmd) {
     std::array<char, 128> buffer;
     std::string result;
     // "r" означает чтение вывода команды
-#ifdef _WIN32
-    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(cmd, "r"), _pclose);
-#else
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
-#endif
-
+    
     if (!pipe) {
         return "Ошибка: Не удалось запустить программу.";
     }
-
+    
     while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
         result += buffer.data();
     }
