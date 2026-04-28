@@ -6,10 +6,11 @@ set(CMAKE_CXX_STANDARD 17)
 # ─── Зависимости ────────────────────────────────────────────
 include(FetchContent)
 
+# ИСПРАВЛЕНИЕ: Качаем готовый архив по прямой ссылке, а не через Git.
+# Это сработает на любом ПК, даже если Git не установлен.
 FetchContent_Declare(
     json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.2
+    URL https://github.com/nlohmann/json/releases/download/v3.11.2/json.tar.xz
 )
 FetchContent_MakeAvailable(json)
 
@@ -37,7 +38,8 @@ add_executable(${PROJECT_NAME}
     consoletab.cpp
     logger.cpp
 )
-# 1. Принудительно задаем расширение .exe для основного файла (чтобы он работал на Windows)
+
+# ВНИМАНИЕ: Это создает Linux-файл с названием .exe. На Windows он не запустится!
 set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".exe")
 
 # 2. Создаем копию файла с расширением .out сразу после билда
@@ -47,7 +49,6 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.out"
     COMMENT "Generating additional .out file..."
 )
-#target_compile_definitions(${PROJECT_NAME} PRIVATE SEQ_OUT)
 
 if(MSVC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
