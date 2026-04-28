@@ -37,7 +37,16 @@ add_executable(${PROJECT_NAME}
     consoletab.cpp
     logger.cpp
 )
+# 1. Принудительно задаем расширение .exe для основного файла (чтобы он работал на Windows)
+set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".exe")
 
+# 2. Создаем копию файла с расширением .out сразу после билда
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:${PROJECT_NAME}> 
+        "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.out"
+    COMMENT "Generating additional .out file..."
+)
 #target_compile_definitions(${PROJECT_NAME} PRIVATE SEQ_OUT)
 
 if(MSVC)
